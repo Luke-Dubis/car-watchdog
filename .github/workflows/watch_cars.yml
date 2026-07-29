@@ -23,18 +23,24 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests
+        run: pip install requests beautifulsoup4
 
-      - name: Run watcher
+      - name: Run sauto watcher
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCE_REPORT: ${{ github.event.inputs.force_report }}
         run: python watch_cars.py
 
+      - name: Run tipcars watcher
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCE_REPORT: ${{ github.event.inputs.force_report }}
+        run: python watch_tipcars.py
+
       - name: Commit state file
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add state_sauto.json
+          git add state_sauto.json state_tipcars
           git diff --quiet --cached || git commit -m "update state"
           git push
