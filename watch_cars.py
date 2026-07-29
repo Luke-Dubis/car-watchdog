@@ -1,31 +1,26 @@
 """
 watch_cars.py - Monitoring novych inzeratu Audi/Mercedes-Benz/BMW na sauto.cz
 Filtry: cena do 1 200 000 Kc, stari max 4 roky, najezd max 100 000 km,
-automaticka prevodovka, karoserie sedan/kombi/kupe/liftback/hatchback (bez SUV/dodavek).
+automaticka prevodovka. Vsechny typy karoserie (vc. SUV) jsou povoleny.
 """
 
 import json
 import os
 import sys
-import time
 import requests
 from datetime import datetime
 
 STATE_FILE = "state_sauto.json"
-SEARCH_URL = "https://www.sauto.cz/api/v1/items/search"
-DETAIL_URL = "https://www.sauto.cz/api/v1/items/{}"
+API_URL = "https://www.sauto.cz/api/v1/items/search"
 
 CURRENT_YEAR = datetime.now().year
 YEAR_FROM = CURRENT_YEAR - 4
 
 BRANDS = ["audi", "mercedes-benz", "bmw"]
 
-# Karoserie, ktere chceme (vylucujeme SUV, dodavky, MPV, pickupy, off-road)
-ALLOWED_BODY_TYPES = {"sedan", "kombi", "kupe", "liftback", "hatchback"}
-
 BASE_PARAMS = {
     "category_id": 838,
-    "condition_seo": "ojete",
+    "condition_seo": "nove,ojete,predvadeci",
     "operating_lease": "false",
     "price_to": 1_200_000,
     "limit": 100,
@@ -43,26 +38,13 @@ HEADERS = {
 def fetch_listings(brand: str) -> list[dict]:
     params = dict(BASE_PARAMS)
     params["manufacturer_model_seo"] = brand
-    resp = requests.get(SEARCH_URL, params=params, headers=HEADERS, timeout=30)
+    resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     return data.get("results", [])
 
 
-def fetch_body_type(item_id: int) -> str:
-    """Vrati seo_name karoserie (napr. 'sedan', 'suv') pro dane auto."""
-    try:
-        resp = requests.get(DETAIL_URL.format(item_id), headers=HEADERS, timeout=30)
-        resp.raise_for_status()
-        data = resp.json().get("result", {})
-        return (data.get("vehicle_body_cb") or {}).get("seo_name", "")
-    except Exception as e:
-        print(f"Chyba pri detailu {item_id}: {e}", file=sys.stderr)
-        return ""
-
-
-def passes_basic_filters(item: dict) -> bool:
-    """Levne filtry, overitelne bez extra dotazu."""
+def passes_filters(item: dict) -> bool:
     price = item.get("price") or 0
     tachometer = item.get("tachometer")
     manufacturing_date = item.get("manufacturing_date")
@@ -123,8 +105,7 @@ def main():
     seen_ids = load_state()
     new_items = []
     total_checked = 0
-    total_basic_passed = 0
-    total_body_passed = 0
+    total_passed = 0
 
     for brand in BRANDS:
         try:
@@ -137,29 +118,15 @@ def main():
         print(f"{brand}: stazeno {len(listings)} inzeratu")
 
         for item in listings:
-            if not passes_basic_filters(item):
-                continue
-            total_basic_passed += 1
-
             item_id = str(item.get("id"))
-
-            # Detail (karoserie) potrebujeme jen pro auta, ktera uz projdou zakladnimi filtry
-            body_type = fetch_body_type(item.get("id"))
-            time.sleep(0.2)  # slusne tempo dotazu, nezatezujeme server
-
-            if body_type not in ALLOWED_BODY_TYPES:
+            if not passes_filters(item):
                 continue
-            total_body_passed += 1
-
+            total_passed += 1
             if item_id not in seen_ids or force_report:
                 new_items.append(item)
             seen_ids.add(item_id)
 
-    print(
-        f"Celkem stazeno: {total_checked}, "
-        f"zakladni filtry: {total_basic_passed}, "
-        f"karoserie OK: {total_body_passed}"
-    )
+    print(f"Celkem stazeno: {total_checked}, splnilo filtry: {total_passed}")
 
     if new_items:
         lines = []
