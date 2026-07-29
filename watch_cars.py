@@ -2,6 +2,8 @@
 watch_cars.py - Monitoring novych inzeratu Audi/Mercedes-Benz/BMW na sauto.cz
 Filtry: cena do 1 200 000 Kc, stari max 4 roky, najezd max 100 000 km,
 automaticka prevodovka, 4-5 dveri.
+Vsechny filtry krome znacky/ceny/kategorie se overuji klientsky (v Pythonu),
+protoze API nekterym extra parametrum vraci chybu 422.
 """
 
 import json
@@ -18,16 +20,12 @@ YEAR_FROM = CURRENT_YEAR - 4
 
 BRANDS = ["audi", "mercedes-benz", "bmw"]
 
+# Jen parametry, ktere jsme overili, ze API prijme bez chyby
 BASE_PARAMS = {
     "category_id": 838,
     "condition_seo": "ojete",
     "operating_lease": "false",
     "price_to": 1_200_000,
-    "tachometer_to": 100_000,
-    "year_from": YEAR_FROM,
-    "doors_from": 4,
-    "doors_to": 5,
-    "gearbox_cb": "automaticka",
     "limit": 100,
     "offset": 0,
 }
@@ -50,7 +48,7 @@ def fetch_listings(brand: str) -> list[dict]:
 
 
 def passes_filters(item: dict) -> bool:
-    """Klientske dofiltrovani - pro jistotu, kdyby API nejaky filtr ignorovalo."""
+    """Vsechny nase filtry overujeme tady, klientsky."""
     price = item.get("price") or 0
     tachometer = item.get("tachometer")
     manufacturing_date = item.get("manufacturing_date")
@@ -58,12 +56,14 @@ def passes_filters(item: dict) -> bool:
 
     if price <= 0 or price > BASE_PARAMS["price_to"]:
         return False
-    if tachometer is None or tachometer > BASE_PARAMS["tachometer_to"]:
+    if tachometer is None or tachometer > 100_000:
         return False
     if manufacturing_date:
         year = int(manufacturing_date[:4])
         if year < YEAR_FROM:
             return False
+    else:
+        return False
     if gearbox != "automaticka":
         return False
 
@@ -109,6 +109,8 @@ def main():
     force_report = os.environ.get("FORCE_REPORT", "false").lower() == "true"
     seen_ids = load_state()
     new_items = []
+    total_checked = 0
+    total_passed = 0
 
     for brand in BRANDS:
         try:
@@ -117,13 +119,19 @@ def main():
             print(f"Chyba pri stahovani {brand}: {e}", file=sys.stderr)
             continue
 
+        total_checked += len(listings)
+        print(f"{brand}: stazeno {len(listings)} inzeratu")
+
         for item in listings:
             item_id = str(item.get("id"))
             if not passes_filters(item):
                 continue
+            total_passed += 1
             if item_id not in seen_ids or force_report:
                 new_items.append(item)
             seen_ids.add(item_id)
+
+    print(f"Celkem stazeno: {total_checked}, splnilo filtry: {total_passed}")
 
     if new_items:
         lines = []
