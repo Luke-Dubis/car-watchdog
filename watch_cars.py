@@ -1,26 +1,28 @@
 """
 watch_cars.py - Monitoring novych inzeratu Audi/Mercedes-Benz/BMW na sauto.cz
 Filtry: cena do 1 200 000 Kc, stari max 4 roky, najezd max 100 000 km,
-automaticka prevodovka, 4-5 dveri.
-Vsechny filtry krome znacky/ceny/kategorie se overuji klientsky (v Pythonu),
-protoze API nekterym extra parametrum vraci chybu 422.
+automaticka prevodovka, karoserie sedan/kombi/kupe/liftback/hatchback (bez SUV/dodavek).
 """
 
 import json
 import os
 import sys
+import time
 import requests
 from datetime import datetime
 
 STATE_FILE = "state_sauto.json"
-API_URL = "https://www.sauto.cz/api/v1/items/search"
+SEARCH_URL = "https://www.sauto.cz/api/v1/items/search"
+DETAIL_URL = "https://www.sauto.cz/api/v1/items/{}"
 
 CURRENT_YEAR = datetime.now().year
 YEAR_FROM = CURRENT_YEAR - 4
 
 BRANDS = ["audi", "mercedes-benz", "bmw"]
 
-# Jen parametry, ktere jsme overili, ze API prijme bez chyby
+# Karoserie, ktere chceme (vylucujeme SUV, dodavky, MPV, pickupy, off-road)
+ALLOWED_BODY_TYPES = {"sedan", "kombi", "kupe", "liftback", "hatchback"}
+
 BASE_PARAMS = {
     "category_id": 838,
     "condition_seo": "ojete",
@@ -41,14 +43,26 @@ HEADERS = {
 def fetch_listings(brand: str) -> list[dict]:
     params = dict(BASE_PARAMS)
     params["manufacturer_model_seo"] = brand
-    resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=30)
+    resp = requests.get(SEARCH_URL, params=params, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     return data.get("results", [])
 
 
-def passes_filters(item: dict) -> bool:
-    """Vsechny nase filtry overujeme tady, klientsky."""
+def fetch_body_type(item_id: int) -> str:
+    """Vrati seo_name karoserie (napr. 'sedan', 'suv') pro dane auto."""
+    try:
+        resp = requests.get(DETAIL_URL.format(item_id), headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+        data = resp.json().get("result", {})
+        return (data.get("vehicle_body_cb") or {}).get("seo_name", "")
+    except Exception as e:
+        print(f"Chyba pri detailu {item_id}: {e}", file=sys.stderr)
+        return ""
+
+
+def passes_basic_filters(item: dict) -> bool:
+    """Levne filtry, overitelne bez extra dotazu."""
     price = item.get("price") or 0
     tachometer = item.get("tachometer")
     manufacturing_date = item.get("manufacturing_date")
@@ -58,11 +72,10 @@ def passes_filters(item: dict) -> bool:
         return False
     if tachometer is None or tachometer > 100_000:
         return False
-    if manufacturing_date:
-        year = int(manufacturing_date[:4])
-        if year < YEAR_FROM:
-            return False
-    else:
+    if not manufacturing_date:
+        return False
+    year = int(manufacturing_date[:4])
+    if year < YEAR_FROM:
         return False
     if gearbox != "automaticka":
         return False
@@ -110,7 +123,8 @@ def main():
     seen_ids = load_state()
     new_items = []
     total_checked = 0
-    total_passed = 0
+    total_basic_passed = 0
+    total_body_passed = 0
 
     for brand in BRANDS:
         try:
@@ -123,15 +137,29 @@ def main():
         print(f"{brand}: stazeno {len(listings)} inzeratu")
 
         for item in listings:
-            item_id = str(item.get("id"))
-            if not passes_filters(item):
+            if not passes_basic_filters(item):
                 continue
-            total_passed += 1
+            total_basic_passed += 1
+
+            item_id = str(item.get("id"))
+
+            # Detail (karoserie) potrebujeme jen pro auta, ktera uz projdou zakladnimi filtry
+            body_type = fetch_body_type(item.get("id"))
+            time.sleep(0.2)  # slusne tempo dotazu, nezatezujeme server
+
+            if body_type not in ALLOWED_BODY_TYPES:
+                continue
+            total_body_passed += 1
+
             if item_id not in seen_ids or force_report:
                 new_items.append(item)
             seen_ids.add(item_id)
 
-    print(f"Celkem stazeno: {total_checked}, splnilo filtry: {total_passed}")
+    print(
+        f"Celkem stazeno: {total_checked}, "
+        f"zakladni filtry: {total_basic_passed}, "
+        f"karoserie OK: {total_body_passed}"
+    )
 
     if new_items:
         lines = []
