@@ -1,6 +1,6 @@
 """
 watch_tipcars.py - Monitoring novych inzeratu Audi/Mercedes-Benz/BMW na tipcars.com
-Filtry: cena do 1 200 000 Kc, stari max 4 roky, najezd max 100 000 km, automat.
+Filtry: cena do 1 000 000 Kc, stari max 4 roky, najezd max 100 000 km, automat.
 Tipcars nema API, proto se cte primo HTML stranky (tzv. scraping).
 """
 
@@ -14,13 +14,13 @@ from bs4 import BeautifulSoup
 
 STATE_FILE = "state_tipcars.json"
 CURRENT_YEAR = datetime.now().year
-YEAR_FROM = CURRENT_YEAR - 4
+YEAR_FROM = CURRENT_YEAR - 3
 
 # URL vzorec zjisteny primo na tipcars.com (rok, cena, km, vybava = automat)
 SEARCH_URLS = {
-    "audi": f"https://www.tipcars.com/audi?{YEAR_FROM}-{CURRENT_YEAR}=&-1200000kc=&-100000km=&vybava=aut-prevodovka",
-    "mercedes-benz": f"https://www.tipcars.com/mercedes-benz?{YEAR_FROM}-{CURRENT_YEAR}=&-1200000kc=&-100000km=&vybava=aut-prevodovka",
-    "bmw": f"https://www.tipcars.com/bmw?{YEAR_FROM}-{CURRENT_YEAR}=&-1200000kc=&-100000km=&vybava=aut-prevodovka",
+    "audi": f"https://www.tipcars.com/audi?{YEAR_FROM}-{CURRENT_YEAR}=&-1000000kc=&-100000km=&vybava=aut-prevodovka",
+    "mercedes-benz": f"https://www.tipcars.com/mercedes-benz?{YEAR_FROM}-{CURRENT_YEAR}=&-1000000kc=&-100000km=&vybava=aut-prevodovka",
+    "bmw": f"https://www.tipcars.com/bmw?{YEAR_FROM}-{CURRENT_YEAR}=&-1000000kc=&-100000km=&vybava=aut-prevodovka",
 }
 
 HEADERS = {
