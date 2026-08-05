@@ -14,7 +14,7 @@ STATE_FILE = "state_sauto.json"
 API_URL = "https://www.sauto.cz/api/v1/items/search"
 
 CURRENT_YEAR = datetime.now().year
-YEAR_FROM = CURRENT_YEAR - 4
+YEAR_FROM = CURRENT_YEAR - 3
 
 BRANDS = ["audi", "mercedes-benz", "bmw"]
 
@@ -22,7 +22,7 @@ BASE_PARAMS = {
     "category_id": 838,
     "condition_seo": "nove,ojete,predvadeci",
     "operating_lease": "false",
-    "price_to": 1_200_000,
+    "price_to": 1_000_000,
     "limit": 100,
     "offset": 0,
 }
