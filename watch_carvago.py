@@ -8,9 +8,17 @@ Skript navíc ověřuje nájezd (<=100 000 km) a stáří (<=4 roky) jako pojist
 
 Bez omezení na zemi původu vozu (Německo, Nizozemsko, Belgie apod. jsou OK).
 
-Nové nalezené inzeráty se nahlásí vytvořením GitHub issue (které se následně
-automaticky zavře) -> to odešle e-mail díky GitHub notifikacím, stejně jako
-u watch_cars.py / watch_tipcars.py.
+Cena je vždy počítána a reportována v CZK VČETNĚ DPH, nezávisle na tom,
+v jaké měně se stránka zrovna vykresluje (u zahraničních vozů se totiž
+občas renderuje v EUR):
+  - primárně se dopočítá z data atributu data-gtm-impressions-metrics1,
+    který obsahuje cenu BEZ DPH v CZK -> vynásobí se 1.21
+  - pokud viditelný text ceny na stránce obsahuje "Kč" (tedy je opravdu
+    v CZK), použije se přímo ten (je přesnější, bez zaokrouhlovacích chyb)
+
+Nové nalezené inzeráty se nahlásí vytvořením JEDNOHO souhrnného GitHub issue
+(které se následně automaticky zavře) -> to odešle jeden souhrnný e-mail,
+stejně jako u watch_cars.py / watch_tipcars.py.
 """
 
 import os
@@ -32,6 +40,8 @@ STATE_FILE = "carvago_state.json"
 MAX_PRICE_CZK = 1_400_000
 MAX_AGE_YEARS = 4
 MAX_MILEAGE_KM = 100_000
+
+CZ_VAT_RATE = 1.21  # pro dopočet ceny s DPH z ceny bez DPH
 
 GITHUB_REPO = os.environ.get("GITHUB_REPOSITORY")  # např. "user/cinemacity-watchdog"
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
@@ -128,8 +138,26 @@ def fetch_listings():
             if val_div:
                 transmission = val_div.get_text(strip=True)
 
+        # --- Cena s DPH v CZK ---
+        # 1) Zkusíme viditelný text ceny, ale pouze pokud je opravdu v Kč.
+        price_czk = None
         price_tag = card.find("p", class_="css-1qi6om6")
-        price_czk = parse_number(price_tag.get_text()) if price_tag else None
+        if price_tag:
+            price_text = price_tag.get_text()
+            if "Kč" in price_text:
+                price_czk = parse_number(price_text)
+
+        # 2) Pokud viditelný text nebyl v Kč (např. renderováno v EUR),
+        #    dopočítáme cenu s DPH z data atributu, který obsahuje
+        #    cenu BEZ DPH v CZK.
+        if price_czk is None:
+            metrics_attr = card.get("data-gtm-impressions-metrics1")
+            if metrics_attr:
+                try:
+                    price_without_vat = float(metrics_attr)
+                    price_czk = round(price_without_vat * CZ_VAT_RATE)
+                except (TypeError, ValueError):
+                    price_czk = None
 
         location_div = card.find("div", class_="css-ge87hl")
         location = location_div.get_text(strip=True) if location_div else None
@@ -167,23 +195,26 @@ def passes_filters(listing):
     return True
 
 
-def create_github_issue(listing):
+def create_github_issue(listings):
+    """Vytvoří JEDNO souhrnné issue pro všechny nové inzeráty najednou."""
     if not GITHUB_REPO or not GITHUB_TOKEN:
         print("GITHUB_REPOSITORY / GITHUB_TOKEN nejsou nastaveny, issue nevytvořeno.")
         return
 
-    title = f"Nová nabídka: {listing['title']} – {listing['price_czk']} Kč"
-    body_lines = [
-        f"**{listing['title']}**",
-        "",
-        f"- Cena: {listing['price_czk']} Kč",
-        f"- Nájezd: {listing['mileage_km']} km",
-        f"- První registrace: {listing['first_registration']}",
-        f"- Převodovka: {listing['transmission']}",
-        f"- Lokace: {listing['location']}",
-        "",
-        f"[Zobrazit inzerát]({listing['url']})",
-    ]
+    count = len(listings)
+    title = f"Carvago: {count} nová/é nabídka/y Audi A5"
+
+    body_lines = [f"Nalezeno **{count}** nových vyhovujících nabídek na Carvago:", ""]
+    for listing in listings:
+        body_lines.append(f"### {listing['title']}")
+        body_lines.append(f"- Cena (s DPH): {listing['price_czk']} Kč")
+        body_lines.append(f"- Nájezd: {listing['mileage_km']} km")
+        body_lines.append(f"- První registrace: {listing['first_registration']}")
+        body_lines.append(f"- Převodovka: {listing['transmission']}")
+        body_lines.append(f"- Lokace: {listing['location']}")
+        body_lines.append(f"- [Zobrazit inzerát]({listing['url']})")
+        body_lines.append("")
+
     body = "\n".join(body_lines)
 
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
@@ -199,7 +230,7 @@ def create_github_issue(listing):
     resp.raise_for_status()
     issue = resp.json()
     issue_number = issue["number"]
-    print(f"Vytvořeno issue #{issue_number} pro {listing['car_id']}")
+    print(f"Vytvořeno souhrnné issue #{issue_number} pro {count} inzerátů")
 
     # Zavřít issue - notifikace/e-mail už proběhla při vytvoření.
     close_url = f"https://api.github.com/repos/{GITHUB_REPO}/issues/{issue_number}"
@@ -238,9 +269,8 @@ def main():
     if not to_report:
         print("Žádné nové vyhovující inzeráty.")
     else:
-        for listing in to_report:
-            print(f"Nahlašuji: {listing['title']} ({listing['car_id']}) - {listing['url']}")
-            create_github_issue(listing)
+        print(f"Nahlašuji souhrnně {len(to_report)} inzerátů.")
+        create_github_issue(to_report)
 
     # Aktualizovat stav vždy podle toho, co skutečně vyhovuje filtrům,
     # aby se známé inzeráty neposílaly opakovaně.
